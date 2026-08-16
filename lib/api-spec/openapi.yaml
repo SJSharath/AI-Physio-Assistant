@@ -10,6 +10,14 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: patients
+    description: Patient records
+  - name: prescriptions
+    description: Therapist-authored exercise prescriptions
+  - name: sessions
+    description: Completed exercise sessions and review summaries
+  - name: dashboard
+    description: Therapist overview metrics
 paths:
   /healthz:
     get:
@@ -24,7 +32,193 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get therapist dashboard summary
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+  /patients:
+    get:
+      operationId: listPatients
+      tags: [patients]
+      summary: List patients
+      responses:
+        "200":
+          description: Patient list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Patient"
+    post:
+      operationId: createPatient
+      tags: [patients]
+      summary: Create a patient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatientInput"
+      responses:
+        "201":
+          description: Created patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+  /patients/{patientId}:
+    get:
+      operationId: getPatient
+      tags: [patients]
+      summary: Get a patient
+      parameters:
+        - $ref: "#/components/parameters/PatientId"
+      responses:
+        "200":
+          description: Patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "404":
+          description: Patient not found
+  /prescriptions:
+    get:
+      operationId: listPrescriptions
+      tags: [prescriptions]
+      summary: List exercise prescriptions
+      parameters:
+        - name: patientId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Prescription list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Prescription"
+    post:
+      operationId: createPrescription
+      tags: [prescriptions]
+      summary: Create an exercise prescription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrescriptionInput"
+      responses:
+        "201":
+          description: Created prescription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Prescription"
+  /prescriptions/{prescriptionId}:
+    patch:
+      operationId: updatePrescription
+      tags: [prescriptions]
+      summary: Update an exercise prescription
+      parameters:
+        - $ref: "#/components/parameters/PrescriptionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrescriptionUpdate"
+      responses:
+        "200":
+          description: Updated prescription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Prescription"
+  /sessions:
+    get:
+      operationId: listSessions
+      tags: [sessions]
+      summary: List completed sessions
+      parameters:
+        - name: patientId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+    post:
+      operationId: createSession
+      tags: [sessions]
+      summary: Save a completed exercise session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionInput"
+      responses:
+        "201":
+          description: Created session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+  /sessions/{sessionId}:
+    get:
+      operationId: getSession
+      tags: [sessions]
+      summary: Get a completed session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
 components:
+  parameters:
+    PatientId:
+      name: patientId
+      in: path
+      required: true
+      schema:
+        type: string
+    PrescriptionId:
+      name: prescriptionId
+      in: path
+      required: true
+      schema:
+        type: string
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +227,121 @@ components:
           type: string
       required:
         - status
+    Patient:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+        initials: { type: string }
+        status: { type: string, enum: [active, paused] }
+        lastSessionAt: { type: ["string", "null"], format: date-time }
+        activePrescriptionCount: { type: number }
+      required: [id, name, email, initials, status, lastSessionAt, activePrescriptionCount]
+    PatientInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        email: { type: string }
+      required: [name, email]
+    AngleRule:
+      type: object
+      properties:
+        joint: { type: string }
+        target: { type: number }
+        min: { type: number }
+        max: { type: number }
+      required: [joint, target, min, max]
+    Prescription:
+      type: object
+      properties:
+        id: { type: string }
+        patientId: { type: string }
+        patientName: { type: string }
+        exerciseId: { type: string, enum: [squat, shoulder-flexion, sit-to-stand] }
+        status: { type: string, enum: [active, draft, paused] }
+        sets: { type: number }
+        repetitions: { type: number }
+        angleRules:
+          type: array
+          items: { $ref: "#/components/schemas/AngleRule" }
+        minRom: { type: number }
+        maxRom: { type: number }
+        instructions:
+          type: array
+          items: { type: string }
+        precautions:
+          type: array
+          items: { type: string }
+        updatedAt: { type: string, format: date-time }
+      required: [id, patientId, patientName, exerciseId, status, sets, repetitions, angleRules, minRom, maxRom, instructions, precautions, updatedAt]
+    PrescriptionInput:
+      type: object
+      properties:
+        patientId: { type: string }
+        exerciseId: { type: string, enum: [squat, shoulder-flexion, sit-to-stand] }
+        sets: { type: number, minimum: 1 }
+        repetitions: { type: number, minimum: 1 }
+        angleRules:
+          type: array
+          items: { $ref: "#/components/schemas/AngleRule" }
+        minRom: { type: number }
+        maxRom: { type: number }
+        instructions:
+          type: array
+          items: { type: string }
+        precautions:
+          type: array
+          items: { type: string }
+      required: [patientId, exerciseId, sets, repetitions, angleRules, minRom, maxRom, instructions, precautions]
+    PrescriptionUpdate:
+      allOf:
+        - $ref: "#/components/schemas/PrescriptionInput"
+    Session:
+      type: object
+      properties:
+        id: { type: string }
+        patientId: { type: string }
+        prescriptionId: { type: string }
+        patientName: { type: string }
+        exerciseId: { type: string }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        reps: { type: number }
+        correctReps: { type: number }
+        romAchieved: { type: number }
+        durationSeconds: { type: number }
+        errors:
+          type: array
+          items: { type: string }
+        status: { type: string, enum: [completed, interrupted] }
+      required: [id, patientId, prescriptionId, patientName, exerciseId, startedAt, endedAt, reps, correctReps, romAchieved, durationSeconds, errors, status]
+    SessionInput:
+      type: object
+      properties:
+        patientId: { type: string }
+        prescriptionId: { type: string }
+        exerciseId: { type: string }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        reps: { type: number, minimum: 0 }
+        correctReps: { type: number, minimum: 0 }
+        romAchieved: { type: number }
+        durationSeconds: { type: number }
+        errors:
+          type: array
+          items: { type: string }
+        status: { type: string, enum: [completed, interrupted] }
+      required: [patientId, prescriptionId, exerciseId, startedAt, endedAt, reps, correctReps, romAchieved, durationSeconds, errors, status]
+    DashboardSummary:
+      type: object
+      properties:
+        patientCount: { type: number }
+        activePrescriptionCount: { type: number }
+        sessionsThisWeek: { type: number }
+        averageCompletion: { type: number }
+        recentSessions:
+          type: array
+          items: { $ref: "#/components/schemas/Session" }
+      required: [patientCount, activePrescriptionCount, sessionsThisWeek, averageCompletion, recentSessions]
 

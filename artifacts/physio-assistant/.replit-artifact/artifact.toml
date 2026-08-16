@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "AI Physiotherapy Home Exercise Assistant"
+description = "A responsive assistive prototype where physiotherapists define patient-specific exercise prescriptions and patients perform camera-guided squat exercises with deterministic movement feedback and session summaries."
+version = "1.0.0"
+id = "artifacts/physio-assistant"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24281
+
+[services.development]
+run = "pnpm --filter @workspace/physio-assistant run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/physio-assistant", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/physio-assistant/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24281"
+BASE_PATH = "/"
