@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Camera, Check, CircleAlert, Clock3, Info, MicOff, Pause, Play, RotateCcw, ShieldCheck, Sparkles, Target, Volume2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Camera, Check, CircleAlert, Clock3, Info, MicOff, Pause, Play, RotateCcw, ShieldCheck, Sparkles, Target, Volume2, RefreshCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useCreateSession, useGetSession, useListPrescriptions, getListPrescriptionsQueryKey, getGetSessionQueryKey, getListSessionsQueryKey, getGetDashboardSummaryQueryKey } from '@workspace/api-client-react';
 import type { Prescription, SessionInput } from '@workspace/api-client-react';
@@ -6,6 +6,7 @@ import { useLocation, useParams, Link } from 'wouter';
 import { AppShell, PageHeader, PrototypeNotice } from '@/components/app-shell';
 import { demoPrescriptions, findPrescription, findSession, formatDate, formatTime } from '@/lib/mock-data';
 import { useQueryClient } from '@tanstack/react-query';
+import { createPoseAnalyzer } from '@/lib/pose-analyzer';
 
 const exerciseLabel = (id: string) => id === 'sit-to-stand' ? 'Sit to stand' : id === 'shoulder-flexion' ? 'Shoulder flexion' : 'Supported squat';
 
@@ -45,29 +46,162 @@ export function LiveSessionPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const startedAtRef = useRef(new Date().toISOString());
-  const [cameraState, setCameraState] = useState<'idle' | 'live' | 'fallback' | 'denied'>('idle');
+  const [cameraState, setCameraState] = useState<'idle' | 'requesting' | 'live' | 'error'>('idle');
+  const [cameraError, setCameraError] = useState('');
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+  const [poseState, setPoseState] = useState<'loading' | 'no-pose' | 'tracking' | 'error'>('loading');
   const [reps, setReps] = useState(0);
   const [phase, setPhase] = useState<'Ready' | 'Lower' | 'Rise'>('Ready');
-  const [angle, setAngle] = useState(72);
+  const [angle, setAngle] = useState<number | null>(null);
   const [voice, setVoice] = useState(true);
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const analyzerCleanupRef = useRef<null | (() => void)>(null);
+
   useEffect(() => {
-    const timer = window.setInterval(() => { if (!paused) { setElapsed((value) => value + 1); setAngle((value) => Math.max(prescription.minRom, Math.min(prescription.maxRom, value + (Math.random() > .5 ? 1 : -1)))); } }, 1000);
+    const timer = window.setInterval(() => { if (!paused) setElapsed((value) => value + 1); }, 1000);
     return () => window.clearInterval(timer);
-  }, [paused, prescription.minRom, prescription.maxRom]);
-  useEffect(() => () => { streamRef.current?.getTracks().forEach((track) => track.stop()); }, []);
+  }, [paused]);
+
+  useEffect(() => {
+    if (cameraState !== 'live' || !videoRef.current) return;
+    let cancelled = false;
+    setPoseState('loading');
+    createPoseAnalyzer(videoRef.current, {
+      onFrame: ({ angle: nextAngle, phase: nextPhase, reps: nextReps, hasPose }) => {
+        if (cancelled) return;
+        setAngle(nextAngle);
+        setPhase(hasPose ? nextPhase : 'Ready');
+        setReps(nextReps);
+        setPoseState(hasPose ? 'tracking' : 'no-pose');
+      },
+      onError: () => { if (!cancelled) setPoseState('error'); },
+    }).then((cleanup) => {
+      if (cancelled) cleanup();
+      else analyzerCleanupRef.current = cleanup;
+    }).catch(() => { if (!cancelled) setPoseState('error'); });
+    return () => {
+      cancelled = true;
+      analyzerCleanupRef.current?.();
+      analyzerCleanupRef.current = null;
+    };
+  }, [cameraState]);
+
+  useEffect(() => () => {
+    analyzerCleanupRef.current?.();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
+
   const startCamera = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) { setCameraState('fallback'); return; }
-    try { const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }); streamRef.current = stream; if (videoRef.current) videoRef.current.srcObject = stream; setCameraState('live'); } catch { setCameraState('fallback'); }
+    if (!navigator.mediaDevices?.getUserMedia || !videoRef.current) {
+      setCameraError('This browser does not provide camera access.');
+      setCameraState('error');
+      return;
+    }
+    setCameraState('requesting');
+    setCameraError('');
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      const video = videoRef.current;
+      video.srcObject = stream;
+      await video.play();
+      if (!video.srcObject || video.paused || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        throw new Error('The camera stream did not start playing.');
+      }
+      streamRef.current = stream;
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+        setCameraError('The camera stream ended. Connect the camera again to continue.');
+        setCameraState('error');
+      }, { once: true });
+      setCameraState('live');
+    } catch (error) {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      const name = error instanceof DOMException ? error.name : '';
+      setCameraError(name === 'NotAllowedError' ? 'Camera permission was denied. Allow camera access and try again.' : 'The camera could not start. Check browser permissions and try again.');
+      setCameraState('error');
+    }
   };
+
+  const switchCamera = () => {
+    setFacingMode((mode) => mode === 'environment' ? 'user' : 'environment');
+    window.setTimeout(startCamera, 0);
+  };
+
   const complete = (status: 'completed' | 'interrupted') => {
     const endedAt = new Date().toISOString();
-    const input: SessionInput = { patientId: prescription.patientId, prescriptionId: prescription.id, exerciseId: prescription.exerciseId, startedAt: startedAtRef.current, endedAt, reps: status === 'interrupted' ? reps : Math.max(reps, prescription.repetitions), correctReps: status === 'interrupted' ? Math.max(0, reps - 1) : Math.max(0, prescription.repetitions - 1), romAchieved: angle, durationSeconds: elapsed, errors: status === 'interrupted' ? ['Session stopped before the planned set was complete.'] : ['One repetition was slightly shallow.'], status };
-    createSession.mutate({ data: input }, { onSuccess: (session) => { queryClient.invalidateQueries({ queryKey: getListSessionsQueryKey() }); queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() }); queryClient.invalidateQueries({ queryKey: getListPrescriptionsQueryKey() }); setLocation(`/patient/summary/${session.id}`); }, onError: () => setLocation('/patient/summary/s-local') });
+    const input: SessionInput = {
+      patientId: prescription.patientId,
+      prescriptionId: prescription.id,
+      exerciseId: prescription.exerciseId,
+      startedAt: startedAtRef.current,
+      endedAt,
+      reps,
+      correctReps: reps,
+      romAchieved: angle ?? 0,
+      durationSeconds: elapsed,
+      errors: status === 'interrupted'
+        ? ['Session stopped before the planned set was complete.']
+        : angle === null ? ['No valid pose was detected during this session.'] : [],
+      status,
+    };
+    createSession.mutate({ data: input }, {
+      onSuccess: (session) => {
+        queryClient.invalidateQueries({ queryKey: getListSessionsQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getListPrescriptionsQueryKey() });
+        setLocation(`/patient/summary/${session.id}`);
+      },
+      onError: () => setLocation('/patient/summary/s-local'),
+    });
   };
-  const simulatedProgress = Math.min(100, (reps / prescription.repetitions) * 100);
-  return <div className="min-h-[100dvh] bg-[#182f36] text-white"><header className="flex items-center justify-between px-5 py-4 md:px-8"><Link href="/patient" className="inline-flex items-center gap-2 text-xs font-bold text-white/60 hover:text-white" data-testid="link-exit-session"><ArrowLeft className="h-4 w-4" />Exit session</Link><div className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[hsl(var(--accent))] text-[hsl(var(--foreground))]"><ActivityIcon /></span><span className="text-sm font-bold">kinetic<span className="text-[hsl(var(--accent))]">/</span>care</span></div><div className="font-mono-ui text-xs text-white/60">{String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</div></header><main className="mx-auto max-w-[1240px] px-4 pb-8 md:px-8"><div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end"><div><p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[hsl(var(--accent))]">Live assist · {exerciseLabel(prescription.exerciseId)}</p><h1 className="mt-2 font-display text-4xl tracking-[-0.03em] md:text-5xl">Find your steady rhythm.</h1></div><div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${cameraState === 'live' ? 'bg-[#83d4ac]' : 'bg-[hsl(var(--accent))]'}`} /><span className="text-xs text-white/60">{cameraState === 'live' ? 'Camera connected' : 'Camera not connected'}</span></div></div><div className="grid gap-5 lg:grid-cols-[1fr_260px]"><div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-white/10 bg-[#243f46] md:aspect-[16/10]">{cameraState === 'live' ? <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover [transform:scaleX(-1)]" /> : <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center"><div className="relative flex h-28 w-28 items-center justify-center rounded-full border border-[hsl(var(--accent))]/40 bg-[hsl(var(--accent))]/10 animate-pulse-ring"><Camera className="h-9 w-9 text-[hsl(var(--accent))]" /></div><h2 className="mt-7 text-lg font-semibold">{cameraState === 'fallback' ? 'Demo analysis is ready' : 'Set up your camera'}</h2><p className="mt-2 max-w-sm text-sm leading-6 text-white/55">{cameraState === 'fallback' ? 'Camera or model access is unavailable. The values shown are simulated for this prototype and are not clinical measurements.' : 'Place your device so your full body is visible, then allow camera access for live assist.'}</p><button onClick={startCamera} className="mt-5 inline-flex h-10 items-center gap-2 rounded-xl bg-[hsl(var(--accent))] px-4 text-xs font-bold text-[hsl(var(--foreground))]" data-testid="button-connect-camera"><Camera className="h-4 w-4" />{cameraState === 'fallback' ? 'Use demo fallback' : 'Connect camera'}</button></div>}{cameraState !== 'idle' && <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-[#182f36]/80 px-3 py-2 text-[10px] font-bold text-white backdrop-blur-sm"><span className={`h-1.5 w-1.5 rounded-full ${cameraState === 'live' ? 'bg-[#83d4ac]' : 'bg-[hsl(var(--accent))]'}`} />{cameraState === 'live' ? 'LIVE CAMERA' : 'DEMO ANALYSIS'}</div>}<div className="absolute bottom-4 left-4 right-4 flex items-end justify-between"><div className="rounded-xl bg-[#182f36]/80 px-3 py-2 backdrop-blur-sm"><p className="text-[10px] uppercase tracking-[0.14em] text-white/50">Current phase</p><p className="mt-1 text-sm font-bold">{phase}</p></div><button onClick={() => setVoice((value) => !value)} className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#182f36]/80 text-white backdrop-blur-sm hover:bg-[#182f36]" data-testid="button-toggle-voice">{voice ? <Volume2 className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}</button></div></div><aside className="space-y-3"><div className="grid grid-cols-2 gap-3 lg:grid-cols-1"><LiveMetric label="Repetitions" value={`${reps}/${prescription.repetitions}`} helper="planned" /><LiveMetric label="Knee angle" value={`${angle}°`} helper={`target ${prescription.angleRules[0]?.target ?? 72}°`} /><LiveMetric label="Range of motion" value={`${Math.max(prescription.minRom, angle)}°`} helper={`${prescription.minRom}–${prescription.maxRom}°`} /></div><div className="rounded-2xl border border-white/10 bg-white/5 p-4"><div className="flex items-center justify-between"><span className="text-xs font-semibold">Set progress</span><span className="font-mono-ui text-[10px] text-white/50">{Math.round(simulatedProgress)}%</span></div><div className="mt-3 h-2 rounded-full bg-white/10"><div className="h-full rounded-full bg-[hsl(var(--accent))] transition-all" style={{ width: `${simulatedProgress}%` }} /></div><p className="mt-3 text-[11px] leading-5 text-white/50">Stay smooth. Quality matters more than speed.</p></div><div className="flex gap-3"><button onClick={() => { setPaused((value) => !value); setPhase((value) => value === 'Ready' ? 'Lower' : 'Ready'); }} className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 text-xs font-bold hover:bg-white/10" data-testid="button-pause-session">{paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}{paused ? 'Resume' : 'Pause'}</button><button onClick={() => complete('interrupted')} className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-[#e5aaa0]/30 bg-[#8b4e45]/20 text-xs font-bold text-[#f4c1b8] hover:bg-[#8b4e45]/30" data-testid="button-stop-session"><CircleAlert className="h-4 w-4" />Stop</button></div><button onClick={() => setReps((value) => Math.min(prescription.repetitions, value + 1))} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[hsl(var(--accent))] text-xs font-bold text-[hsl(var(--foreground))]" data-testid="button-demo-rep"><Check className="h-4 w-4" />Log rep in demo</button></aside></div><div className="mt-5 flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-4 text-xs leading-5 text-white/50"><Info className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--accent))]" />Assistive analysis is a research prototype. It does not diagnose, measure clinically, or replace guidance from your physiotherapist.</div><button onClick={() => complete('completed')} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-white text-sm font-bold text-[hsl(var(--foreground))] hover:bg-white/90" data-testid="button-complete-session">Finish session <ArrowRight className="h-4 w-4" /></button></main></div>;
+
+  const progress = Math.min(100, (reps / prescription.repetitions) * 100);
+  const poseMessage = poseState === 'no-pose'
+    ? 'Position your full body in frame'
+    : poseState === 'loading' ? 'Starting pose analysis…'
+      : poseState === 'error' ? 'Pose analysis is unavailable. Reconnect the camera to try again.'
+        : 'Pose detected · move through your prescribed range';
+  const cameraLabel = cameraState === 'live' ? 'Camera connected' : cameraState === 'requesting' ? 'Connecting camera…' : 'Camera not connected';
+
+  return <div className="min-h-[100dvh] bg-[#182f36] text-white">
+    <header className="flex items-center justify-between px-5 py-4 md:px-8">
+      <Link href="/patient" className="inline-flex items-center gap-2 text-xs font-bold text-white/60 hover:text-white" data-testid="link-exit-session"><ArrowLeft className="h-4 w-4" />Exit session</Link>
+      <div className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[hsl(var(--accent))] text-[hsl(var(--foreground))]"><ActivityIcon /></span><span className="text-sm font-bold">kinetic<span className="text-[hsl(var(--accent))]">/</span>care</span></div>
+      <div className="font-mono-ui text-xs text-white/60">{String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</div>
+    </header>
+    <main className="mx-auto max-w-[1240px] px-4 pb-8 md:px-8">
+      <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div><p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[hsl(var(--accent))]">Live assist · {exerciseLabel(prescription.exerciseId)}</p><h1 className="mt-2 font-display text-4xl tracking-[-0.03em] md:text-5xl">Find your steady rhythm.</h1></div>
+        <div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${cameraState === 'live' ? 'bg-[#83d4ac]' : 'bg-[hsl(var(--accent))]'}`} /><span className="text-xs text-white/60">{cameraLabel}</span></div>
+      </div>
+      <div className="grid gap-5 lg:grid-cols-[1fr_260px]">
+        <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-white/10 bg-[#243f46] md:aspect-[16/10]">
+          <video ref={videoRef} autoPlay playsInline muted className={`h-full w-full object-cover [transform:scaleX(-1)] ${cameraState === 'live' ? 'opacity-100' : 'pointer-events-none absolute opacity-0'}`} />
+          {cameraState !== 'live' && <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
+            <div className="relative flex h-28 w-28 items-center justify-center rounded-full border border-[hsl(var(--accent))]/40 bg-[hsl(var(--accent))]/10 animate-pulse-ring"><Camera className="h-9 w-9 text-[hsl(var(--accent))]" /></div>
+            <h2 className="mt-7 text-lg font-semibold">{cameraState === 'error' ? 'Camera unavailable' : cameraState === 'requesting' ? 'Connecting your camera…' : 'Set up your camera'}</h2>
+            <p className="mt-2 max-w-sm text-sm leading-6 text-white/55">{cameraError || 'Place your device so your full body is visible, then allow camera access for live assist.'}</p>
+            <button onClick={startCamera} disabled={cameraState === 'requesting'} className="mt-5 inline-flex h-10 items-center gap-2 rounded-xl bg-[hsl(var(--accent))] px-4 text-xs font-bold text-[hsl(var(--foreground))] disabled:opacity-60" data-testid="button-connect-camera"><Camera className="h-4 w-4" />{cameraState === 'requesting' ? 'Connecting…' : 'Connect camera'}</button>
+          </div>}
+          {cameraState === 'live' && <><div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-[#182f36]/80 px-3 py-2 text-[10px] font-bold text-white backdrop-blur-sm"><span className="h-1.5 w-1.5 rounded-full bg-[#83d4ac]" />LIVE CAMERA</div><button onClick={switchCamera} className="absolute right-4 top-4 inline-flex items-center gap-2 rounded-full bg-[#182f36]/80 px-3 py-2 text-[10px] font-bold text-white backdrop-blur-sm hover:bg-[#182f36]" data-testid="button-switch-camera"><RefreshCw className="h-3.5 w-3.5" />Switch camera</button></>}
+          {cameraState === 'live' && <div className="absolute left-4 right-4 top-16 rounded-xl bg-[#182f36]/80 px-3 py-2 text-center text-xs font-semibold text-white backdrop-blur-sm">{poseMessage}</div>}
+          <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between"><div className="rounded-xl bg-[#182f36]/80 px-3 py-2 backdrop-blur-sm"><p className="text-[10px] uppercase tracking-[0.14em] text-white/50">Current phase</p><p className="mt-1 text-sm font-bold">{phase}</p></div><button onClick={() => setVoice((value) => !value)} className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#182f36]/80 text-white backdrop-blur-sm hover:bg-[#182f36]" data-testid="button-toggle-voice">{voice ? <Volume2 className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}</button></div>
+        </div>
+        <aside className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-1"><LiveMetric label="Repetitions" value={`${reps}/${prescription.repetitions}`} helper="from detected pose" /><LiveMetric label="Knee angle" value={angle === null ? '—' : `${angle}°`} helper={`target ${prescription.angleRules[0]?.target ?? 72}°`} /><LiveMetric label="Range of motion" value={angle === null ? '—' : `${angle}°`} helper={`${prescription.minRom}–${prescription.maxRom}°`} /></div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4"><div className="flex items-center justify-between"><span className="text-xs font-semibold">Set progress</span><span className="font-mono-ui text-[10px] text-white/50">{Math.round(progress)}%</span></div><div className="mt-3 h-2 rounded-full bg-white/10"><div className="h-full rounded-full bg-[hsl(var(--accent))] transition-all" style={{ width: `${progress}%` }} /></div><p className="mt-3 text-[11px] leading-5 text-white/50">Only valid pose frames count toward your set.</p></div>
+          <div className="flex gap-3"><button onClick={() => setPaused((value) => !value)} className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 text-xs font-bold hover:bg-white/10" data-testid="button-pause-session">{paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}{paused ? 'Resume' : 'Pause'}</button><button onClick={() => complete('interrupted')} className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-[#e5aaa0]/30 bg-[#8b4e45]/20 text-xs font-bold text-[#f4c1b8] hover:bg-[#8b4e45]/30" data-testid="button-stop-session"><CircleAlert className="h-4 w-4" />Stop</button></div>
+          <button disabled className="flex h-11 w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-white/10 text-xs font-bold text-white/45" data-testid="button-demo-rep"><Check className="h-4 w-4" />Reps follow live pose</button>
+        </aside>
+      </div>
+      <div className="mt-5 flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-4 text-xs leading-5 text-white/50"><Info className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--accent))]" />Assistive analysis is a research prototype. It does not diagnose, measure clinically, or replace guidance from your physiotherapist.</div>
+      <button onClick={() => complete('completed')} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-white text-sm font-bold text-[hsl(var(--foreground))] hover:bg-white/90" data-testid="button-complete-session">Finish session <ArrowRight className="h-4 w-4" /></button>
+    </main>
+  </div>;
 }
 
 function ActivityIcon() { return <Sparkles className="h-4 w-4" />; }
