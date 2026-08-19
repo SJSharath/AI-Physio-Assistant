@@ -1,0 +1,40 @@
+Fix the live camera implementation in the exercise session.
+
+Current bug:
+On mobile, tapping "Connect camera" changes the status to "Camera connected", but the camera panel remains blank. The knee angle/ROM values also change even though no live video is visible, which suggests the movement metrics may currently be simulated or disconnected from the actual camera stream.
+
+Required behavior:
+
+1. Use the browser's real getUserMedia camera stream.
+2. Default to the BACK/REAR camera on mobile using:
+   facingMode: { ideal: "environment" }
+3. Request camera permission when "Connect camera" is pressed.
+4. Attach the returned MediaStream to the actual <video> element.
+5. The video must be visibly rendered inside the large camera panel.
+6. Use:
+   autoPlay
+   playsInline
+   muted
+   on the video element.
+7. Verify video.play() succeeds after the stream is attached.
+8. Do not show "Camera connected" unless the MediaStream is active AND the video element is actually playing.
+9. Show a clear error if camera permission is denied or the stream fails.
+10. Add a front/rear camera switch if practical.
+11. IMPORTANT: remove any simulated/fake movement values from the live session.
+12. Knee angle, ROM, pose state and repetition count must come from actual pose-analysis frames only.
+13. If no valid person/pose is detected, show "Position your full body in frame" or equivalent and do NOT generate changing joint-angle values.
+14. Keep the existing prescription logic and UI.
+15. Do not redesign the application.
+16. Do not change Firebase schema.
+
+For MediaPipe:
+Feed the actual HTMLVideoElement frames into the existing Pose Landmarker/live pose pipeline.
+Do not generate mock landmarks.
+
+Acceptance test:
+On Android Chrome, open the published app, start a squat session, tap Connect Camera, allow camera permission, and visibly see the phone's rear-camera live feed inside the exercise panel. Move in front of the camera and verify the displayed pose/angle values change because of the actual movement. Cover/leave the camera view and verify the system stops producing valid pose measurements.
+
+After fixing, tell me:
+- which file(s) changed
+- how the camera stream is attached
+- whether the live pose analyzer now uses the real video element
