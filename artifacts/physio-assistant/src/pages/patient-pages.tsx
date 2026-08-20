@@ -20,7 +20,7 @@ const poseConnections: [number, number][] = [
   [23, 25], [25, 27], [24, 26], [26, 28], [27, 29], [27, 31], [28, 30], [28, 32],
 ];
 
-function PoseOverlay({ landmarks, angle, minRom, maxRom }: { landmarks: PoseLandmark[] | null; angle: number | null; minRom: number; maxRom: number }) {
+function PoseOverlay({ video, landmarks, angle, target, minRom, maxRom }: { video: HTMLVideoElement | null; landmarks: PoseLandmark[] | null; angle: number | null; target: number; minRom: number; maxRom: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -43,9 +43,17 @@ function PoseOverlay({ landmarks, angle, minRom, maxRom }: { landmarks: PoseLand
       context.clearRect(0, 0, width, height);
       if (!landmarks?.length) return;
 
-      const point = (landmark: PoseLandmark) => ({ x: (1 - landmark.x) * width, y: landmark.y * height });
+      const videoWidth = video?.videoWidth || width;
+      const videoHeight = video?.videoHeight || height;
+      const scale = Math.max(width / videoWidth, height / videoHeight);
+      const renderedWidth = videoWidth * scale;
+      const renderedHeight = videoHeight * scale;
+      const offsetX = (width - renderedWidth) / 2;
+      const offsetY = (height - renderedHeight) / 2;
+      const point = (landmark: PoseLandmark) => ({ x: offsetX + (1 - landmark.x) * renderedWidth, y: offsetY + landmark.y * renderedHeight });
       const isVisible = (index: number) => (landmarks[index]?.visibility ?? 1) >= 0.35;
-      const status = angle === null ? '#b9dfd6' : angle >= minRom && angle <= maxRom ? '#83d4ac' : angle >= minRom - 8 && angle <= maxRom + 8 ? '#f2c66d' : '#ef8b7b';
+      const nearLimit = Math.max((maxRom - minRom) * 0.2, 1);
+      const status = angle === null ? '#b9dfd6' : angle >= minRom && angle <= maxRom ? '#83d4ac' : angle >= minRom - nearLimit && angle <= maxRom + nearLimit ? '#f2c66d' : '#ef8b7b';
 
       context.lineCap = 'round';
       context.lineJoin = 'round';
@@ -84,12 +92,13 @@ function PoseOverlay({ landmarks, angle, minRom, maxRom }: { landmarks: PoseLand
         });
         if (angle !== null) {
           context.font = '700 12px DM Sans, sans-serif';
-          const label = `${angle}°`;
-          const labelX = Math.min(width - 58, Math.max(8, knee.x + 14));
+          const label = `${angle}° · target ${target}°`;
+          const labelWidth = Math.max(102, context.measureText(label).width + 14);
+          const labelX = Math.min(width - labelWidth - 8, Math.max(8, knee.x + 14));
           const labelY = Math.max(24, knee.y - 14);
           context.fillStyle = 'rgba(24, 47, 54, .88)';
           context.beginPath();
-          context.roundRect(labelX - 7, labelY - 15, 48, 24, 7);
+          context.roundRect(labelX - 7, labelY - 15, labelWidth, 24, 7);
           context.fill();
           context.fillStyle = status;
           context.fillText(label, labelX, labelY + 1);
@@ -101,7 +110,7 @@ function PoseOverlay({ landmarks, angle, minRom, maxRom }: { landmarks: PoseLand
     const observer = new ResizeObserver(draw);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [landmarks, angle, minRom, maxRom]);
+  }, [video, landmarks, angle, target, minRom, maxRom]);
 
   return <div ref={containerRef} className="pointer-events-none absolute inset-0 z-[1]"><canvas ref={canvasRef} aria-label="Live pose skeleton overlay" /></div>;
 }
@@ -295,7 +304,7 @@ export function LiveSessionPage() {
       <div className="grid gap-5 lg:grid-cols-[1fr_260px]">
         <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-white/10 bg-[#243f46] md:aspect-[16/10]">
           <video ref={videoRef} autoPlay playsInline muted className={`h-full w-full object-cover [transform:scaleX(-1)] ${cameraState === 'live' ? 'opacity-100' : 'pointer-events-none absolute opacity-0'}`} />
-          {cameraState === 'live' && <PoseOverlay landmarks={landmarks} angle={angle} minRom={prescription.minRom} maxRom={prescription.maxRom} />}
+          {cameraState === 'live' && <PoseOverlay video={videoRef.current} landmarks={landmarks} angle={angle} target={prescription.angleRules[0]?.target ?? prescription.minRom} minRom={prescription.minRom} maxRom={prescription.maxRom} />}
           {cameraState !== 'live' && <div className="absolute inset-0 flex flex-col items-center justify-center px-8 text-center">
             <div className="relative flex h-28 w-28 items-center justify-center rounded-full border border-[hsl(var(--accent))]/40 bg-[hsl(var(--accent))]/10 animate-pulse-ring"><Camera className="h-9 w-9 text-[hsl(var(--accent))]" /></div>
             <h2 className="mt-7 text-lg font-semibold">{cameraState === 'error' ? 'Camera unavailable' : cameraState === 'requesting' ? 'Connecting your camera…' : 'Set up your camera'}</h2>
@@ -307,7 +316,7 @@ export function LiveSessionPage() {
           <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between"><div className="rounded-xl bg-[#182f36]/80 px-3 py-2 backdrop-blur-sm"><p className="text-[10px] uppercase tracking-[0.14em] text-white/50">Current phase</p><p className="mt-1 text-sm font-bold">{phase}</p></div><button onClick={() => setVoice((value) => !value)} className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#182f36]/80 text-white backdrop-blur-sm hover:bg-[#182f36]" data-testid="button-toggle-voice">{voice ? <Volume2 className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}</button></div>
         </div>
         <aside className="space-y-3">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-1"><LiveMetric label="Repetitions" value={`${reps}/${prescription.repetitions}`} helper="from detected pose" /><LiveMetric label="Knee angle" value={angle === null ? '—' : `${angle}°`} helper={`target ${prescription.angleRules[0]?.target ?? 72}°`} /><LiveMetric label="Range of motion" value={angle === null ? '—' : `${angle}°`} helper={`${prescription.minRom}–${prescription.maxRom}°`} /></div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-1"><LiveMetric label="Repetitions" value={`${reps}/${prescription.repetitions}`} helper="from detected pose" /><LiveMetric label="Knee angle" value={angle === null ? '—' : `${angle}°`} helper={prescription.angleRules[0] ? `target ${prescription.angleRules[0].target}°` : 'target unavailable'} /><LiveMetric label="Range of motion" value={angle === null ? '—' : `${angle}°`} helper={`${prescription.minRom}–${prescription.maxRom}°`} /></div>
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4"><div className="flex items-center justify-between"><span className="text-xs font-semibold">Set progress</span><span className="font-mono-ui text-[10px] text-white/50">{Math.round(progress)}%</span></div><div className="mt-3 h-2 rounded-full bg-white/10"><div className="h-full rounded-full bg-[hsl(var(--accent))] transition-all" style={{ width: `${progress}%` }} /></div><p className="mt-3 text-[11px] leading-5 text-white/50">Only valid pose frames count toward your set.</p></div>
           <div className="flex gap-3"><button onClick={() => setPaused((value) => !value)} className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 text-xs font-bold hover:bg-white/10" data-testid="button-pause-session">{paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}{paused ? 'Resume' : 'Pause'}</button><button onClick={() => complete('interrupted')} className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-[#e5aaa0]/30 bg-[#8b4e45]/20 text-xs font-bold text-[#f4c1b8] hover:bg-[#8b4e45]/30" data-testid="button-stop-session"><CircleAlert className="h-4 w-4" />Stop</button></div>
           <div className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-white/10 text-xs font-bold text-white/45" data-testid="status-live-reps"><Check className="h-4 w-4" />Reps follow live pose</div>
