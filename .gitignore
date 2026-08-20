@@ -47,3 +47,7 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Obsolete lockfiles for this PNPM workspace
+package-lock.json
+yarn.lock

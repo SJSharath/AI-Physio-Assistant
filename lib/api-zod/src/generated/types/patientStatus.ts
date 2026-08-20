@@ -12,4 +12,5 @@ export type PatientStatus = typeof PatientStatus[keyof typeof PatientStatus];
 export const PatientStatus = {
   active: 'active',
   paused: 'paused',
+  retired: 'retired',
 } as const;

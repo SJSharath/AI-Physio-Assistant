@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { db, patientsTable, prescriptionsTable, sessionsTable } from "@workspace/db";
+import { db, patientsTable, prescriptionsTable, sessionsTable } from "../../../../lib/db/src";
 import {
   CreatePatientBody,
   CreatePatientResponse,
@@ -21,7 +21,7 @@ import {
   UpdatePrescriptionBody,
   UpdatePrescriptionParams,
   UpdatePrescriptionResponse,
-} from "@workspace/api-zod";
+} from "../../../../lib/api-zod/src";
 
 const router: IRouter = Router();
 

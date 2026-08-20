@@ -123,6 +123,9 @@ export const ListPrescriptionsResponseItem = zod.object({
   "maxRom": zod.number(),
   "instructions": zod.array(zod.string()),
   "precautions": zod.array(zod.string()),
+  "holdTimeSeconds": zod.number().min(0).optional(),
+  "frequency": zod.string().optional(),
+  "voiceCue": zod.string().optional()
   "updatedAt": zod.coerce.date()
 })
 export const ListPrescriptionsResponse = zod.array(ListPrescriptionsResponseItem)
@@ -170,6 +173,9 @@ export const CreatePrescriptionResponse = zod.object({
   "maxRom": zod.number(),
   "instructions": zod.array(zod.string()),
   "precautions": zod.array(zod.string()),
+  "holdTimeSeconds": zod.number().min(0).optional(),
+  "frequency": zod.string().optional(),
+  "voiceCue": zod.string().optional(),
   "updatedAt": zod.coerce.date()
 })
 

@@ -6,9 +6,17 @@ import {
 
 export type PoseFrame = {
   angle: number | null;
+  landmarks: PoseLandmark[] | null;
   phase: 'Ready' | 'Lower' | 'Rise';
   reps: number;
   hasPose: boolean;
+};
+
+export type PoseLandmark = {
+  x: number;
+  y: number;
+  z?: number;
+  visibility?: number;
 };
 
 type PoseAnalyzerOptions = {
@@ -63,7 +71,7 @@ export async function createPoseAnalyzer(
   let stopped = false;
 
   const emitNoPose = () =>
-    options.onFrame({ angle: null, phase: 'Ready', reps, hasPose: false });
+    options.onFrame({ angle: null, landmarks: null, phase: 'Ready', reps, hasPose: false });
 
   const process = () => {
     if (stopped) return;
@@ -98,7 +106,7 @@ export async function createPoseAnalyzer(
           } else {
             phase = 'Ready';
           }
-          options.onFrame({ angle, phase, reps, hasPose: true });
+          options.onFrame({ angle, landmarks, phase, reps, hasPose: true });
         }
       } catch (error) {
         options.onError(

@@ -33,6 +33,9 @@ export const prescriptionsTable = pgTable("physio_prescriptions", {
   maxRom: real("max_rom").notNull(),
   instructions: jsonb("instructions").notNull().$type<string[]>(),
   precautions: jsonb("precautions").notNull().$type<string[]>(),
+  holdTimeSeconds: real("hold_time_seconds"),
+  frequency: text("frequency"),
+  voiceCue: text("voice_cue"),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

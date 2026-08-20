@@ -234,7 +234,7 @@ components:
         name: { type: string }
         email: { type: string }
         initials: { type: string }
-        status: { type: string, enum: [active, paused] }
+        status: { type: string, enum: [active, paused, retired] }
         lastSessionAt: { type: ["string", "null"], format: date-time }
         activePrescriptionCount: { type: number }
       required: [id, name, email, initials, status, lastSessionAt, activePrescriptionCount]
@@ -273,6 +273,9 @@ components:
         precautions:
           type: array
           items: { type: string }
+        holdTimeSeconds: { type: number, minimum: 0 }
+        frequency: { type: string }
+        voiceCue: { type: string }
         updatedAt: { type: string, format: date-time }
       required: [id, patientId, patientName, exerciseId, status, sets, repetitions, angleRules, minRom, maxRom, instructions, precautions, updatedAt]
     PrescriptionInput:
@@ -293,6 +296,9 @@ components:
         precautions:
           type: array
           items: { type: string }
+        holdTimeSeconds: { type: number, minimum: 0 }
+        frequency: { type: string }
+        voiceCue: { type: string }
       required: [patientId, exerciseId, sets, repetitions, angleRules, minRom, maxRom, instructions, precautions]
     PrescriptionUpdate:
       allOf:

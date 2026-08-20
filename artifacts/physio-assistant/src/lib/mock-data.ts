@@ -1,4 +1,5 @@
-import type { DashboardSummary, Patient, Prescription, Session } from '@workspace/api-client-react';
+import type { DashboardSummary, Patient, Prescription, PrescriptionInput, Session, SessionInput } from '@/lib/api-client-react';
+import { getLinkedPatients } from '@/lib/auth';
 
 export const demoPatients: Patient[] = [
   { id: 'p-001', name: 'Maya Chen', email: 'maya.chen@example.com', initials: 'MC', status: 'active', lastSessionAt: '2025-02-12T09:30:00.000Z', activePrescriptionCount: 2 },
@@ -25,5 +26,78 @@ export const demoSummary: DashboardSummary = { patientCount: 12, activePrescript
 export const formatDate = (value: string | null | undefined) => value ? new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(new Date(value)) : 'Not yet';
 export const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 export const findPatient = (id?: string | null) => demoPatients.find((patient) => patient.id === id) ?? demoPatients[0];
-export const findPrescription = (id?: string | null) => demoPrescriptions.find((prescription) => prescription.id === id) ?? demoPrescriptions[0];
-export const findSession = (id?: string | null) => demoSessions.find((session) => session.id === id) ?? demoSessions[0];
+export const findPrescription = (id?: string | null) => getStoredPrescriptions().find((prescription) => prescription.id === id) ?? demoPrescriptions[0];
+export const findSession = (id?: string | null) => getStoredSessions().find((session) => session.id === id) ?? demoSessions[0];
+
+const LOCAL_PRESCRIPTIONS_KEY = 'kc_local_prescriptions';
+const LOCAL_SESSIONS_KEY = 'kc_local_sessions';
+
+function readLocal<T>(key: string): T[] {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) as T[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocal<T>(key: string, values: T[]) {
+  localStorage.setItem(key, JSON.stringify(values));
+}
+
+export function getStoredPrescriptions(): Prescription[] {
+  return [...readLocal<Prescription>(LOCAL_PRESCRIPTIONS_KEY), ...demoPrescriptions];
+}
+
+export function mergePrescriptions(remote: Prescription[] | undefined): Prescription[] {
+  return [...(remote ?? []), ...getStoredPrescriptions()].filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index);
+}
+
+export function saveStoredPrescription(input: PrescriptionInput, patientName: string): Prescription {
+  const prescription: Prescription = {
+    id: `rx-local-${crypto.randomUUID()}`,
+    patientId: input.patientId,
+    patientName,
+    exerciseId: input.exerciseId,
+    status: 'active',
+    sets: input.sets,
+    repetitions: input.repetitions,
+    angleRules: input.angleRules,
+    minRom: input.minRom,
+    maxRom: input.maxRom,
+    instructions: input.instructions,
+    precautions: input.precautions,
+    holdTimeSeconds: input.holdTimeSeconds,
+    frequency: input.frequency,
+    voiceCue: input.voiceCue,
+    updatedAt: new Date().toISOString(),
+  };
+  writeLocal(LOCAL_PRESCRIPTIONS_KEY, [prescription, ...readLocal<Prescription>(LOCAL_PRESCRIPTIONS_KEY)]);
+  return prescription;
+}
+
+export function getStoredSessions(): Session[] {
+  return [...readLocal<Session>(LOCAL_SESSIONS_KEY), ...demoSessions];
+}
+
+export function mergeSessions(remote: Session[] | undefined): Session[] {
+  return [...(remote ?? []), ...getStoredSessions()].filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index);
+}
+
+export function saveStoredSession(input: SessionInput, patientName: string): Session {
+  const session: Session = { id: `s-local-${crypto.randomUUID()}`, ...input, patientName };
+  writeLocal(LOCAL_SESSIONS_KEY, [session, ...readLocal<Session>(LOCAL_SESSIONS_KEY)]);
+  return session;
+}
+
+export function getLocalPatientsForDoctor(doctorId: string): Patient[] {
+  return getLinkedPatients(doctorId).map((user) => ({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    initials: user.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase(),
+    status: user.status === 'retired' ? 'retired' : 'active',
+    lastSessionAt: null,
+    activePrescriptionCount: getStoredPrescriptions().filter((prescription) => prescription.patientId === user.id).length,
+  }));
+}
