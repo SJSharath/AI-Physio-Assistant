@@ -1,2 +1,8 @@
 User-agent: *
 Allow: /
+Disallow: /signin
+Disallow: /signup
+Disallow: /patient
+Disallow: /physio
+Disallow: /api/
+Sitemap: https://kineticcare.app/sitemap.xml

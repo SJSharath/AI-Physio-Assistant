@@ -203,6 +203,11 @@ export function LiveSessionPage() {
   }, []);
 
   const startCamera = async () => {
+    if (!window.isSecureContext && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+      setCameraError('Camera access requires HTTPS. Open this app over a secure connection.');
+      setCameraState('error');
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia || !videoRef.current) {
       setCameraError('This browser does not provide camera access.');
       setCameraState('error');

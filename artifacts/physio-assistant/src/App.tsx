@@ -1,4 +1,5 @@
 import { type ReactNode } from 'react';
+import { useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -102,11 +103,24 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
 }
 
+function RouteMetadata() {
+  const [location] = useLocation();
+  useEffect(() => {
+    const isPublic = location === '/';
+    const robots = document.querySelector('meta[name="robots"]');
+    if (robots) robots.setAttribute('content', isPublic ? 'index, follow' : 'noindex, nofollow');
+    const canonical = document.querySelector('link[rel="canonical"]');
+    if (canonical) canonical.setAttribute('href', 'https://kineticcare.app/');
+  }, [location]);
+  return null;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+          <RouteMetadata />
           <Router />
         </WouterRouter>
         <Toaster />
